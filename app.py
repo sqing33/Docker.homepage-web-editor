@@ -8,102 +8,94 @@ from urllib.parse import urljoin, urlparse
 from minio import Minio
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
-# --- 硬编码的内部路径 (非用户配置项) ---
+# homepage 配置文件路径
 HOMEPAGE_CONFIG_PATH = '/app/homepage/config/services.yaml'
 HOMEPAGE_SETTINGS_PATH = '/app/homepage/config/settings.yaml'
 HOMEPAGE_BOOKMARKS_PATH = '/app/homepage/config/bookmarks.yaml'
 
 UPLOAD_FOLDER = '/tmp/homepage-tool-uploads'
 LOCAL_ICON_PATH = '/app/data/icons'
-LOCAL_BACKGROUND_PATH = '/app/data/backgrounds'  # 新增背景路径
+LOCAL_BACKGROUND_PATH = '/app/data/backgrounds'
 
 # 初始化 Flask 应用
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = 'a_very_secure_and_random_secret_key_that_you_should_change'
 
-# --- 加载用户可配置的参数 ---
-try:
-    config_path = '/app/data/config.yaml'
-    with open(config_path, 'r', encoding='utf-8') as f:
-        user_config = yaml.safe_load(f)
-    print("User configuration from config.yaml loaded successfully.")
+# 存储策略
+ICON_STORAGE_STRATEGY = os.getenv('ICON_STORAGE_STRATEGY', 'local')
+print(f"统一存储策略已设置为: '{ICON_STORAGE_STRATEGY}'")
 
-    ICON_STORAGE_STRATEGY = user_config.get('icon_storage',
-                                            {}).get('strategy', 'local')
-    print(f"Unified storage strategy set to: '{ICON_STORAGE_STRATEGY}'")
+# MinIO 配置
+MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
+MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
+MINIO_ICONS_BUCKET_NAME = os.getenv('MINIO_ICONS_BUCKET_NAME', 'icons')
+MINIO_BACKGROUND_BUCKET_NAME = os.getenv('MINIO_BACKGROUND_BUCKET_NAME',
+                                         'background')
+MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'true').lower() == 'true'
 
-    MINIO_ENDPOINT = user_config.get('minio', {}).get('endpoint')
-    MINIO_ACCESS_KEY = user_config.get('minio', {}).get('access_key')
-    MINIO_SECRET_KEY = user_config.get('minio', {}).get('secret_key')
-    MINIO_ICONS_BUCKET_NAME = user_config.get('minio', {}).get('icons_bucket')
-    MINIO_BACKGROUND_BUCKET_NAME = user_config.get('minio',
-                                                   {}).get('background_bucket')
-    MINIO_USE_SSL = user_config.get('minio', {}).get('use_ssl', True)
-    DOCKER_API_ENDPOINT = user_config.get('docker_api_endpoint')
+# Docker API 配置
+DOCKER_API_ENDPOINT = os.getenv('DOCKER_API_ENDPOINT')
 
-except Exception as e:
-    print(
-        f"FATAL: Could not load or parse config.yaml. Falling back to safe defaults. Error: {e}"
-    )
-    ICON_STORAGE_STRATEGY = 'local'
-    MINIO_ENDPOINT = None
-    DOCKER_API_ENDPOINT = None
+if DOCKER_API_ENDPOINT:
+    print("Docker API 端点已加载。")
+if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
+    print("MinIO 配置已加载。")
 
-# --- 条件化注册路由 ---
+# --- 根据存储策略条件化地注册路由 ---
 if ICON_STORAGE_STRATEGY == 'local':
 
     @app.route('/icons/<path:filename>')
     def serve_icon(filename):
         return send_from_directory(LOCAL_ICON_PATH, filename)
 
-    print("Local icon serving API (/icons) has been ENABLED.")
+    print("本地图标服务 API (/icons) 已启用。")
 
-    @app.route('/backgrounds/<path:filename>')  # 新增背景 API
+    @app.route('/backgrounds/<path:filename>')
     def serve_background(filename):
         return send_from_directory(LOCAL_BACKGROUND_PATH, filename)
 
-    print("Local background serving API (/backgrounds) has been ENABLED.")
+    print("本地背景服务 API (/backgrounds) 已启用。")
 else:
-    print(
-        "Local file serving APIs (/icons, /backgrounds) have been DISABLED because storage strategy is not 'local'."
-    )
+    print("由于存储策略不是 'local'，本地文件服务 API (/icons, /backgrounds) 已被禁用。")
 
-# 确保必要的目录存在
+# 确保所有必要的目录都存在
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(LOCAL_ICON_PATH, exist_ok=True)
-os.makedirs(LOCAL_BACKGROUND_PATH, exist_ok=True)  # 创建背景目录
+os.makedirs(LOCAL_BACKGROUND_PATH, exist_ok=True)
 
-# 初始化MinIO客户端
+# 初始化 MinIO 客户端
 minio_client = None
 if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     try:
+        # 从完整的 endpoint URL 中提取 host:port 部分
         minio_pure_endpoint = urlparse(
             MINIO_ENDPOINT).netloc or MINIO_ENDPOINT.split('//')[-1]
         minio_client = Minio(minio_pure_endpoint,
                              access_key=MINIO_ACCESS_KEY,
                              secret_key=MINIO_SECRET_KEY,
                              secure=MINIO_USE_SSL)
-        if not minio_client.bucket_exists(MINIO_ICONS_BUCKET_NAME):
-            print(f"警告: MinIO bucket '{MINIO_ICONS_BUCKET_NAME}' 不存在。")
-        if not minio_client.bucket_exists(MINIO_BACKGROUND_BUCKET_NAME):
-            print(f"警告: MinIO bucket '{MINIO_BACKGROUND_BUCKET_NAME}' 不存在。")
-        else:
-            print("MinIO 客户端初始化成功。")
+        # 这里可以添加对存储桶存在性的检查，但为了简化启动流程，也可以在实际使用时再检查
+        print("MinIO 客户端初始化成功。")
     except Exception as e:
-        print(f"严重错误: 无法连接到 MinIO。错误: {e}")
+        print(f"致命错误: 无法连接到 MinIO。请检查您的 MINIO 环境变量。错误: {e}")
         minio_client = None
 
 
 # --- 工具函数 ---
 def fetch_and_save_icon(url):
+    """根据 URL 抓取网站图标 (favicon)"""
     headers = {
         'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
     }
     temp_icon_path = None
     try:
+        # 禁用 InsecureRequestWarning 警告
         requests.packages.urllib3.disable_warnings(
             requests.packages.urllib3.exceptions.InsecureRequestWarning)
+
+        # 1. 尝试直接访问 /favicon.ico
         parsed_url = urlparse(url)
         favicon_ico_url = f"{parsed_url.scheme}://{parsed_url.netloc}/favicon.ico"
         response = requests.get(favicon_ico_url,
@@ -117,6 +109,8 @@ def fetch_and_save_icon(url):
             with open(temp_icon_path, 'wb') as f:
                 f.write(response.content)
             return temp_icon_path
+
+        # 2. 如果失败，则解析 HTML 页面查找 <link> 标签
         page_response = requests.get(url,
                                      verify=False,
                                      timeout=10,
@@ -126,14 +120,18 @@ def fetch_and_save_icon(url):
         icon_links = soup.find_all('link',
                                    rel=lambda r: r and 'icon' in r.lower())
         if not icon_links: return None
+
+        # 通常最后一个链接是最高清的
         best_link = icon_links[-1].get('href')
         if not best_link: return None
+
         icon_url = urljoin(url, best_link)
         icon_response = requests.get(icon_url,
                                      verify=False,
                                      timeout=10,
                                      headers=headers)
         icon_response.raise_for_status()
+
         ext = os.path.splitext(urlparse(icon_url).path)[1] or '.png'
         filename = f"{uuid.uuid4()}{ext}"
         temp_icon_path = os.path.join(UPLOAD_FOLDER, filename)
@@ -141,24 +139,26 @@ def fetch_and_save_icon(url):
             f.write(icon_response.content)
         return temp_icon_path
     except Exception as e:
+        # 如果过程中发生错误，清理已下载的临时文件
         if temp_icon_path and os.path.exists(temp_icon_path):
             os.remove(temp_icon_path)
         return None
 
 
-# 泛化的本地保存函数
 def save_file_locally(temp_path, destination_directory):
+    """将临时文件保存到本地持久化目录"""
     try:
         filename = os.path.basename(temp_path)
         permanent_path = os.path.join(destination_directory, filename)
         shutil.copy2(temp_path, permanent_path)
         return filename
     except Exception as e:
-        print(f"Error saving file to {destination_directory}: {e}")
+        print(f"保存文件到 {destination_directory} 时出错: {e}")
         return None
 
 
 def upload_to_minio(file_path, bucket_name):
+    """上传文件到 MinIO 对象存储"""
     if not minio_client: return None
     try:
         object_prefix = "backgrounds/" if bucket_name == MINIO_BACKGROUND_BUCKET_NAME else "icons/"
@@ -173,11 +173,13 @@ def upload_to_minio(file_path, bucket_name):
 # --- API 路由 ---
 @app.route('/')
 def index():
+    """提供主页面"""
     return render_template('index.html')
 
 
 @app.route('/api/settings', methods=['GET'])
 def get_settings():
+    """获取 settings.yaml 的内容"""
     try:
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}
@@ -190,13 +192,15 @@ def get_settings():
 
 @app.route('/api/settings/background', methods=['POST'])
 def save_background_settings():
+    """保存背景设置到 settings.yaml"""
     new_bg_data = request.get_json()
     all_settings = {}
     try:
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             all_settings = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        pass
+        pass  # 如果文件不存在，就创建一个新的
+
     all_settings['background'] = new_bg_data
     try:
         with open(HOMEPAGE_SETTINGS_PATH, 'w', encoding='utf-8') as f:
@@ -212,10 +216,12 @@ def save_background_settings():
 
 @app.route('/api/backgrounds', methods=['GET'])
 def list_backgrounds():
+    """列出所有可用的背景图片"""
     if ICON_STORAGE_STRATEGY == 'minio':
         if not minio_client: return jsonify({"error": "MinIO 未配置"}), 500
         try:
             if not minio_client.bucket_exists(MINIO_BACKGROUND_BUCKET_NAME):
+                print(f"MinIO 存储桶 '{MINIO_BACKGROUND_BUCKET_NAME}' 不存在。")
                 return jsonify([])
             objects = minio_client.list_objects(MINIO_BACKGROUND_BUCKET_NAME,
                                                 recursive=True)
@@ -238,12 +244,13 @@ def list_backgrounds():
             return jsonify(image_urls)
         except Exception as e:
             return jsonify({"error": f"从本地列出背景失败: {e}"}), 500
-    return jsonify([])  # 默认返回空
+    return jsonify([])  # 默认返回空列表
 
 
 @app.route('/api/backgrounds/upload', methods=['POST'])
 def upload_background():
-    if 'file' not in request.files: return jsonify({"error": "没有文件部分"}), 400
+    """上传新的背景图片"""
+    if 'file' not in request.files: return jsonify({"error": "请求中没有文件部分"}), 400
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "没有选择文件"}), 400
 
@@ -257,7 +264,7 @@ def upload_background():
         if ICON_STORAGE_STRATEGY == 'minio':
             final_url = upload_to_minio(temp_file_path,
                                         MINIO_BACKGROUND_BUCKET_NAME)
-            if not final_url: raise Exception("上传到 MinIO 失败")
+            if not final_url: raise Exception("上传背景到 MinIO 失败")
         elif ICON_STORAGE_STRATEGY == 'local':
             local_filename = save_file_locally(temp_file_path,
                                                LOCAL_BACKGROUND_PATH)
@@ -276,8 +283,9 @@ def upload_background():
 
 @app.route('/api/docker/containers', methods=['GET'])
 def get_docker_containers():
+    """获取 Docker 容器列表"""
     if not DOCKER_API_ENDPOINT:
-        return jsonify({"error": "Docker API endpoint 未配置"}), 500
+        return jsonify({"error": "Docker API 端点未配置"}), 500
     try:
         api_url = f"{DOCKER_API_ENDPOINT.rstrip('/')}/containers/json?all=true"
         response = requests.get(api_url, timeout=10)
@@ -319,6 +327,7 @@ def get_docker_containers():
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
+    """获取布局和所有分组信息"""
     layout = {}
     all_groups = set()
     try:
@@ -347,6 +356,7 @@ def get_config():
 
 @app.route('/api/services', methods=['GET'])
 def get_services():
+    """获取所有服务"""
     try:
         with open(HOMEPAGE_CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or []
@@ -359,6 +369,7 @@ def get_services():
 
 @app.route('/api/services', methods=['POST'])
 def save_services():
+    """保存服务配置"""
     try:
         with open(HOMEPAGE_CONFIG_PATH, 'w', encoding='utf-8') as f:
             yaml.dump(request.get_json(),
@@ -373,6 +384,7 @@ def save_services():
 
 @app.route('/api/bookmarks', methods=['GET'])
 def get_bookmarks():
+    """获取所有书签"""
     try:
         with open(HOMEPAGE_BOOKMARKS_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or []
@@ -385,6 +397,7 @@ def get_bookmarks():
 
 @app.route('/api/bookmarks', methods=['POST'])
 def save_bookmarks():
+    """保存书签配置"""
     try:
         with open(HOMEPAGE_BOOKMARKS_PATH, 'w', encoding='utf-8') as f:
             yaml.dump(request.get_json(),
@@ -399,6 +412,7 @@ def save_bookmarks():
 
 @app.route('/api/item/prepare', methods=['POST'])
 def prepare_item_api():
+    """准备一个服务或书签项目（抓取图标、处理上传等）"""
     name, url, desc, abbr = request.form.get('name'), request.form.get(
         'href'), request.form.get('description',
                                   ''), request.form.get('abbr', '')
@@ -410,36 +424,40 @@ def prepare_item_api():
     temp_file_path, icon_url_for_config = None, current_icon_url if current_icon_url not in [
         None, 'null', 'undefined'
     ] else None
+
     try:
         if icon_file and icon_file.filename != '':
+            # 优先处理用户直接上传的图标
             filename = f"{uuid.uuid4()}-{os.path.basename(icon_file.filename)}"
             temp_file_path = os.path.join(UPLOAD_FOLDER, filename)
             icon_file.save(temp_file_path)
         elif not icon_url_for_config:
+            # 如果没有当前图标，也没有上传新图标，则尝试从 URL 抓取
             temp_file_path = fetch_and_save_icon(url)
 
         if temp_file_path:
+            # 如果有临时文件（无论是上传还是抓取），则根据策略进行存储
             if ICON_STORAGE_STRATEGY == 'minio':
-                print("Strategy 'minio': Attempting icon upload...")
+                print("策略 'minio': 正在尝试上传图标...")
                 minio_url = upload_to_minio(temp_file_path,
                                             MINIO_ICONS_BUCKET_NAME)
                 if minio_url: icon_url_for_config = minio_url
-                else: print("MinIO icon upload failed.")
+                else: print("MinIO 图标上传失败。")
             elif ICON_STORAGE_STRATEGY == 'local':
-                print("Strategy 'local': Saving icon locally...")
+                print("策略 'local': 正在本地保存图标...")
                 local_filename = save_file_locally(temp_file_path,
                                                    LOCAL_ICON_PATH)
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
             else:
-                print(
-                    f"Warning: Unknown strategy '{ICON_STORAGE_STRATEGY}'. Defaulting to 'local'."
-                )
+                # 对未知策略的降级处理
+                print(f"警告: 未知策略 '{ICON_STORAGE_STRATEGY}'。将默认使用 'local'。")
                 local_filename = save_file_locally(temp_file_path,
                                                    LOCAL_ICON_PATH)
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
 
+        # 构建最终要返回给前端的项目对象
         final_item_obj = {'name': name, 'href': url}
         if desc: final_item_obj['description'] = desc
         if icon_url_for_config: final_item_obj['icon'] = icon_url_for_config
@@ -449,9 +467,12 @@ def prepare_item_api():
     except Exception as e:
         return jsonify({"error": f"处理项目时发生未知错误: {e}"}), 500
     finally:
+        # 确保清理临时文件
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
 
+# --- 应用启动入口 ---
 if __name__ == '__main__':
+    # 使用 debug=True 进行开发，生产环境应通过 Gunicorn 启动
     app.run(host='0.0.0.0', port=3211, debug=True)
