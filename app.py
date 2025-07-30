@@ -9,9 +9,9 @@ from minio import Minio
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 # --- 硬编码的内部路径 (非用户配置项) ---
-HOMEPAGE_CONFIG_PATH = '/app/Docker/homepage/config/services.yaml'
-HOMEPAGE_SETTINGS_PATH = '/app/Docker/homepage/config/settings.yaml'
-HOMEPAGE_BOOKMARKS_PATH = '/app/Docker/homepage/config/bookmarks.yaml'
+HOMEPAGE_CONFIG_PATH = '/app/homepage/config/services.yaml'
+HOMEPAGE_SETTINGS_PATH = '/app/homepage/config/settings.yaml'
+HOMEPAGE_BOOKMARKS_PATH = '/app/homepage/config/bookmarks.yaml'
 
 UPLOAD_FOLDER = '/tmp/homepage-tool-uploads'
 LOCAL_ICON_PATH = '/app/data/icons'
