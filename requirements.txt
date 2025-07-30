@@ -1,0 +1,6 @@
+Flask
+requests
+PyYAML
+minio
+beautifulsoup4
+gunicorn

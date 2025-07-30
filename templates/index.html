@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Homepage 编辑器</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <style>
+      html {
+        overflow-y: scroll;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background-color: #f0f2f5;
+        transition: background-image 0.5s ease-in-out, backdrop-filter 0.5s ease-in-out;
+      }
+      #app {
+        padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
+      }
+      /* Vue加载前隐藏元素 */
+      [v-cloak] {
+        display: none;
+      }
+      /* 顶部工具栏样式 */
+      .header-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        background-color: #fff;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      /* 页面标题样式 */
+      .page-title {
+        margin-top: 40px;
+        color: #303133;
+      }
+      /* 页面分隔线样式 */
+      .page-divider {
+        margin-top: 50px;
+        border-bottom: 2px solid #dcdfe6;
+      }
+      /* 可拖动元素样式 */
+      .draggable-col,
+      .bookmark-item,
+      .bookmarks-column-title,
+      .group-title {
+        cursor: move;
+      }
+      /* 拖动时的占位元素样式 */
+      .ghost {
+        opacity: 0.5;
+        background: #c8ebfb !important;
+        border: 1px dashed #409eff;
+      }
+      /* 服务区域分组标题样式 */
+      .services-section .group-title {
+        margin-top: 30px;
+        margin-bottom: 15px;
+        font-size: 1.5em;
+        font-weight: bold;
+        border-bottom: 2px solid #eee;
+        padding-bottom: 5px;
+      }
+      /* 图标预览样式 */
+      .icon-preview {
+        width: 32px;
+        height: 32px;
+        margin-right: 12px;
+        border-radius: 6px;
+        object-fit: contain;
+        flex-shrink: 0;
+        vertical-align: middle;
+      }
+      /* 服务卡片样式 */
+      .services-section .el-card {
+        margin-bottom: 20px;
+      }
+      /* 服务卡片内容区域样式 */
+      .services-section .el-card__body {
+        padding: 0;
+      }
+      /* 服务卡片内容样式 */
+      .services-section .card-content {
+        display: flex;
+        align-items: center;
+        padding: 16px;
+      }
+      /* 服务卡片文本区域样式 */
+      .services-section .card-text {
+        flex-grow: 1;
+        overflow: hidden;
+      }
+      /* 服务名称样式 */
+      .services-section .service-name {
+        font-weight: bold;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* 服务描述样式 */
+      .services-section .service-description {
+        font-size: 0.9em;
+        color: #888;
+        margin-top: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* 服务URL区域样式 */
+      .services-section .card-url {
+        padding: 5px;
+        border-top: 1px solid #ebeef5;
+      }
+      /* 服务链接样式 */
+      .services-section .card-url-link {
+        display: flex;
+        align-items: center;
+        font-size: 0.85em;
+        color: #606266;
+        text-decoration: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .services-section .card-url-link .el-icon {
+        margin-right: 5px;
+        flex-shrink: 0;
+      }
+      /* 服务卡片底部样式 */
+      .services-section .card-footer {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        background-color: #fafafa;
+        padding: 8px 16px;
+        border-top: 1px solid #ebeef5;
+      }
+      /* 书签区域样式 */
+      .bookmarks-section {
+        margin-bottom: 30px;
+      }
+      /* 书签列样式 */
+      .bookmarks-column {
+        background-color: #fff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        height: 100%;
+      }
+      /* 书签列标题样式 */
+      .bookmarks-column-title {
+        font-size: 1.5em;
+        margin-top: 0;
+        margin-bottom: 25px;
+      }
+      /* 书签项列表样式 */
+      .bookmark-item-list {
+        min-height: 50px;
+      }
+      /* 单个书签项样式 */
+      .bookmark-item {
+        display: flex;
+        align-items: center;
+        padding: 8px 5px;
+        border-radius: 5px;
+        transition: background-color 0.2s;
+      }
+      .bookmark-item:hover {
+        background-color: #f5f7fa;
+      }
+      .bookmark-item:hover .bookmark-actions {
+        display: inline-flex;
+      }
+      /* 书签图标样式 */
+      .bookmark-icon {
+        width: 16px;
+        height: 16px;
+        margin-right: 10px;
+        flex-shrink: 0;
+      }
+      /* 书签缩写样式 */
+      .bookmark-abbr {
+        width: 16px;
+        height: 16px;
+        margin-right: 10px;
+        flex-shrink: 0;
+        font-size: 10px;
+        line-height: 16px;
+        text-align: center;
+        font-weight: bold;
+        display: inline-block;
+        background-color: #909399;
+        color: white;
+        border-radius: 3px;
+      }
+      /* 书签链接样式 */
+      .bookmark-link {
+        flex-grow: 1;
+        text-decoration: none;
+        color: #303133;
+      }
+      /* 书签操作按钮样式 */
+      .bookmark-actions {
+        display: none;
+        margin-left: auto;
+        padding-left: 10px;
+      }
+      /* 背景缩略图样式 */
+      .bg-thumbnail {
+        width: 100%;
+        height: 80px;
+        object-fit: cover;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 3px solid transparent;
+        transition: border-color 0.3s;
+      }
+      /* 背景缩略图悬停样式 */
+      .bg-thumbnail:hover {
+        border-color: #79bbff;
+      }
+      /* 选中背景样式 */
+      .bg-thumbnail.selected-bg {
+        border-color: #409eff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <div class="header-toolbar">
+        <h1>Homepage 编辑器</h1>
+        <div>
+          <el-button @click="openBackgroundDialog" size="large" style="margin-left: 12px">背景设置</el-button>
+          <el-button @click="openDockerDialog" size="large" style="margin-left: 12px">从 Docker 导入</el-button>
+          <el-button type="primary" @click="openAddDialog()" size="large" style="margin-left: 12px"> 添加新项目 </el-button>
+        </div>
+      </div>
+
+      <div class="services-section">
+        <h1 class="page-title">服务 (services.yaml)</h1>
+        <div v-loading="isLoading">
+          <el-empty v-if="!services.length && !isLoading" description="无服务或加载失败"></el-empty>
+          <div v-for="(group, groupIndex) in services" :key="group.name" class="sortable-group" :data-group-index="groupIndex" data-type="service">
+            <h2 class="group-title">[[ group.name ]]</h2>
+            <el-row :gutter="20" class="sortable-container" :data-group-index="groupIndex" data-type="service">
+              <el-col v-for="(item, itemIndex) in group.items" :key="item.name" :span="24 / (config.layout[group.name]?.columns || 4)" class="draggable-col">
+                <el-card shadow="hover">
+                  <div class="card-content">
+                    <img :src="item.icon" v-if="item.icon" class="icon-preview" @error="({ target }) => target.style.display='none'" />
+                    <div class="card-text">
+                      <div class="service-name" :title="item.name">[[ item.name ]]</div>
+                      <div class="service-description" :title="item.description">[[ item.description || '无描述' ]]</div>
+                    </div>
+                  </div>
+                  <div class="card-url">
+                    <a :href="item.href" target="_blank" class="card-url-link"><span>[[ item.href ]]</span></a>
+                  </div>
+                  <div class="card-footer">
+                    <el-button size="small" :icon="Edit" @click="handleEdit(groupIndex, itemIndex, 'service')"></el-button>
+                    <el-button size="small" type="danger" plain :icon="Delete" @click="handleDelete(groupIndex, itemIndex, 'service')"></el-button>
+                  </div>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider"></div>
+
+      <div class="bookmarks-section">
+        <h1 class="page-title">书签 (bookmarks.yaml)</h1>
+        <div v-loading="isLoading">
+          <el-empty v-if="!bookmarks.length && !isLoading" description="无书签或加载失败"></el-empty>
+          <el-row :gutter="20" class="sortable-container" data-type="bookmark-column">
+            <el-col v-for="(column, colIndex) in bookmarks" :key="column.name" :span="24 / (bookmarks.length > 0 ? bookmarks.length : 1)" class="draggable-col">
+              <div class="bookmarks-column">
+                <h2 class="bookmarks-column-title">[[ column.name ]]</h2>
+                <div class="bookmark-item-list sortable-container" data-type="bookmark-item" :data-col-index="colIndex">
+                  <div v-for="(bookmark, bmIndex) in column.items" :key="bookmark.href" class="bookmark-item draggable-col">
+                    <img :src="bookmark.icon" v-if="bookmark.icon" class="bookmark-icon" @error="({ target }) => target.style.display='none'" />
+                    <span v-else-if="bookmark.abbr" class="bookmark-abbr">[[ bookmark.abbr.substring(0,2) ]]</span>
+                    <a :href="bookmark.href" target="_blank" class="bookmark-link">[[ bookmark.abbr || bookmark._categoryName ]]</a>
+                    <div class="bookmark-actions">
+                      <el-button size="small" :icon="Edit" @click.stop="handleEdit(colIndex, bmIndex, 'bookmark')"></el-button>
+                      <el-button size="small" :icon="Delete" type="danger" plain @click.stop="handleDelete(colIndex, bmIndex, 'bookmark')"></el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+      </div>
+
+      <el-dialog v-model="addDialogVisible" :title="isEditMode ? '编辑项目' : '添加新项目'" width="50%" :close-on-click-modal="false">
+        <el-form :model="addForm" ref="addFormRef" label-width="120px">
+          <el-form-item label="项目类型" prop="type" v-if="!isEditMode">
+            <el-radio-group v-model="addForm.type">
+              <el-radio label="service">服务</el-radio>
+              <el-radio label="bookmark">书签</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <template v-if="addForm.type === 'service'">
+            <el-form-item label="服务组" required>
+              <el-select v-model="addForm.group" filterable allow-create placeholder="选择或创建一个组">
+                <el-option v-for="g in serviceGroupNames" :key="g" :label="g" :value="g"></el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="名称" prop="name" required>
+              <el-input v-model="addForm.name" placeholder="填写服务名称"></el-input>
+            </el-form-item>
+            <el-form-item label="描述" prop="description">
+              <el-input v-model="addForm.description"></el-input>
+            </el-form-item>
+          </template>
+          <template v-if="addForm.type === 'bookmark'">
+            <el-form-item label="书签列" required>
+              <el-select v-model="addForm.column" filterable allow-create placeholder="选择或创建一列">
+                <el-option v-for="c in bookmarkColumnNames" :key="c" :label="c" :value="c"></el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="名称" prop="name" required>
+              <el-input v-model="addForm.name" placeholder="书签的唯一名称, 如: PT GTK"></el-input>
+            </el-form-item>
+            <el-form-item label="缩写 (Abbr)" prop="abbr">
+              <el-input v-model="addForm.abbr" placeholder="显示在链接上的文本, 默认为名称"></el-input>
+            </el-form-item>
+          </template>
+          <el-form-item label="地址 (URL)" prop="href" required>
+            <el-input v-model="addForm.href"></el-input>
+          </el-form-item>
+          <el-form-item label="当前图标">
+            <img :src="addForm.icon" v-if="addForm.icon" class="icon-preview" @error="({ target }) => target.style.display='none'" />
+            <span v-else>无</span>
+          </el-form-item>
+          <el-form-item label="上传新图标">
+            <input type="file" @change="handleFileChange" accept="image/*,.svg" ref="fileInput" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="addDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitForm">确认</el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog v-model="backgroundDialogVisible" title="背景设置" width="50%" :close-on-click-modal="false">
+        <el-form :model="backgroundForm" label-width="100px">
+          <el-form-item label="图片 URL">
+            <el-input v-model="backgroundForm.image" placeholder="输入图片地址、上传或从下方选择"></el-input>
+          </el-form-item>
+          <el-form-item label="上传新背景">
+            <div v-loading="isUploadingBackground" element-loading-text="上传中...">
+              <input type="file" @change="handleBackgroundFileUpload" accept="image/*" ref="backgroundFileInput" />
+            </div>
+          </el-form-item>
+          <el-form-item label="选择现有背景">
+            <el-row :gutter="10" style="width: 100%">
+              <el-empty v-if="!backgroundList.length" description="没有找到背景图片" style="width: 100%"></el-empty>
+              <el-col :span="4" v-for="bg in backgroundList" :key="bg.url">
+                <img :src="bg.url" class="bg-thumbnail" :class="{ 'selected-bg': bg.url === backgroundForm.image }" @click="selectBackgroundImage(bg)" :title="bg.name" />
+              </el-col>
+            </el-row>
+          </el-form-item>
+          <el-form-item label="饱和度">
+            <el-slider v-model="backgroundForm.saturate" :min="0" :max="200" show-input></el-slider>
+          </el-form-item>
+          <el-form-item label="不透明度">
+            <el-slider v-model="backgroundForm.opacity" :min="0" :max="100" show-input></el-slider>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="backgroundDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitBackgroundSettings" :loading="isSavingBackground">确认保存</el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog v-model="dockerDialogVisible" title="从 Docker 导入服务" width="75%" :close-on-click-modal="false">
+        <el-input v-model="dockerSearchQuery" placeholder="按容器名称搜索" clearable style="margin-bottom: 15px"></el-input>
+
+        <el-table :data="filteredDockerContainers" v-loading="isDockerLoading" style="width: 100%" height="60vh">
+          <el-table-column prop="Name" label="容器名称" width="250" sortable></el-table-column>
+          <el-table-column prop="Image" label="镜像" show-overflow-tooltip></el-table-column>
+
+          <el-table-column label="实际的URL">
+            <template #default="scope">
+              <div v-if="scope.row.suggested_urls && scope.row.suggested_urls.length">
+                <div v-for="url in scope.row.suggested_urls" :key="url" style="margin-bottom: 4px; line-height: 1.5">
+                  <a :href="url" target="_blank" rel="noopener noreferrer">[[ url ]]</a>
+                </div>
+              </div>
+              <span v-else style="color: #909399">无可用URL</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column prop="State" label="状态" width="120" sortable>
+            <template #default="scope">
+              <el-tag :type="scope.row.State === 'running' ? 'success' : 'info'" disable-transitions> [[ scope.row.State ]] </el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="scope">
+              <el-button size="small" type="primary" @click="handleDockerImport(scope.row)">导入</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <template #footer>
+          <el-button @click="dockerDialogVisible = false">关闭</el-button>
+        </template>
+      </el-dialog>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <script>
+      const { Edit, Delete, Plus, Link, Picture } = ElementPlusIconsVue;
+    </script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  </body>
+</html>
