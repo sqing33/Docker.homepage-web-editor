@@ -26,13 +26,16 @@ ICON_STORAGE_STRATEGY = os.getenv('ICON_STORAGE_STRATEGY', 'local')
 print(f"统一存储策略已设置为: '{ICON_STORAGE_STRATEGY}'")
 
 # MinIO 配置
+# 内部连接使用的端点 (必须是HTTP地址)
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
+# 公开访问的端点 (写入配置文件的地址，通常是HTTPS)
+# 如果未提供，则默认使用内部连接端点
+MINIO_PUBLIC_ENDPOINT = os.getenv('MINIO_PUBLIC_ENDPOINT', MINIO_ENDPOINT)
 MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
 MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
 MINIO_ICONS_BUCKET_NAME = os.getenv('MINIO_ICONS_BUCKET_NAME', 'icons')
 MINIO_BACKGROUND_BUCKET_NAME = os.getenv('MINIO_BACKGROUND_BUCKET_NAME',
                                          'background')
-MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'true').lower() == 'true'
 
 # Docker API 配置
 DOCKER_API_ENDPOINT = os.getenv('DOCKER_API_ENDPOINT')
@@ -41,6 +44,8 @@ if DOCKER_API_ENDPOINT:
     print("Docker API 端点已加载。")
 if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     print("MinIO 配置已加载。")
+    print(f" - MinIO 内部连接地址: {MINIO_ENDPOINT}")
+    print(f" - MinIO 公开访问地址: {MINIO_PUBLIC_ENDPOINT}")
 
 # --- 根据存储策略条件化地注册路由 ---
 if ICON_STORAGE_STRATEGY == 'local':
@@ -71,12 +76,14 @@ if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
         # 从完整的 endpoint URL 中提取 host:port 部分
         minio_pure_endpoint = urlparse(
             MINIO_ENDPOINT).netloc or MINIO_ENDPOINT.split('//')[-1]
+
+        # secure=False 表示强制使用 HTTP
         minio_client = Minio(minio_pure_endpoint,
                              access_key=MINIO_ACCESS_KEY,
                              secret_key=MINIO_SECRET_KEY,
-                             secure=MINIO_USE_SSL)
-        # 这里可以添加对存储桶存在性的检查，但为了简化启动流程，也可以在实际使用时再检查
-        print("MinIO 客户端初始化成功。")
+                             secure=False)
+
+        print("MinIO 客户端初始化成功 (使用HTTP连接)。")
     except Exception as e:
         print(f"致命错误: 无法连接到 MinIO。请检查您的 MINIO 环境变量。错误: {e}")
         minio_client = None
@@ -164,7 +171,10 @@ def upload_to_minio(file_path, bucket_name):
         object_prefix = "backgrounds/" if bucket_name == MINIO_BACKGROUND_BUCKET_NAME else "icons/"
         object_name = f"{object_prefix}{uuid.uuid4()}_{os.path.basename(file_path)}"
         minio_client.fput_object(bucket_name, object_name, file_path)
-        return f"{MINIO_ENDPOINT.rstrip('/')}/{bucket_name}/{object_name}"
+
+        # 使用公开的端点地址来构建最终返回的 URL
+        return f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{bucket_name}/{object_name}"
+
     except Exception as e:
         print(f"上传到 MinIO 失败: {e}")
         return None
@@ -199,7 +209,7 @@ def save_background_settings():
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             all_settings = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        pass
+        pass  # 如果文件不存在，就创建一个新的
 
     all_settings['background'] = new_bg_data
     try:
@@ -225,9 +235,10 @@ def list_backgrounds():
                 return jsonify([])
             objects = minio_client.list_objects(MINIO_BACKGROUND_BUCKET_NAME,
                                                 recursive=True)
+            # 列出图片时，同样使用公开地址
             image_urls = [{
                 "url":
-                f"{MINIO_ENDPOINT.rstrip('/')}/{MINIO_BACKGROUND_BUCKET_NAME}/{obj.object_name}",
+                f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{MINIO_BACKGROUND_BUCKET_NAME}/{obj.object_name}",
                 "name": obj.object_name
             } for obj in objects]
             return jsonify(image_urls)
@@ -438,6 +449,7 @@ def prepare_item_api():
             temp_file_path = fetch_and_save_icon(url)
 
         if temp_file_path:
+            # 如果有临时文件（无论是上传还是抓取），则根据策略进行存储
             if ICON_STORAGE_STRATEGY == 'minio':
                 print("策略 'minio': 正在尝试上传图标...")
                 minio_url = upload_to_minio(temp_file_path,
@@ -451,6 +463,7 @@ def prepare_item_api():
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
             else:
+                # 对未知策略的降级处理
                 print(f"警告: 未知策略 '{ICON_STORAGE_STRATEGY}'。将默认使用 'local'。")
                 local_filename = save_file_locally(temp_file_path,
                                                    LOCAL_ICON_PATH)
@@ -472,5 +485,7 @@ def prepare_item_api():
             os.remove(temp_file_path)
 
 
+# --- 应用启动入口 ---
 if __name__ == '__main__':
+    # 使用 debug=True 进行开发，生产环境应通过 Gunicorn 启动
     app.run(host='0.0.0.0', port=3211, debug=True)
