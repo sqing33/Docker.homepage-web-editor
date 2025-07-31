@@ -3,6 +3,7 @@ import uuid
 import yaml
 import requests
 import shutil
+import json
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from minio import Minio
@@ -17,7 +18,6 @@ UPLOAD_FOLDER = '/tmp/homepage-tool-uploads'
 LOCAL_ICON_PATH = '/app/data/icons'
 LOCAL_BACKGROUND_PATH = '/app/data/backgrounds'
 
-# 初始化 Flask 应用
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = 'a_very_secure_and_random_secret_key_that_you_should_change'
 
@@ -26,10 +26,7 @@ ICON_STORAGE_STRATEGY = os.getenv('ICON_STORAGE_STRATEGY', 'local')
 print(f"统一存储策略已设置为: '{ICON_STORAGE_STRATEGY}'")
 
 # MinIO 配置
-# 内部连接使用的端点 (必须是HTTP地址)
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
-# 公开访问的端点 (写入配置文件的地址，通常是HTTPS)
-# 如果未提供，则默认使用内部连接端点
 MINIO_PUBLIC_ENDPOINT = os.getenv('MINIO_PUBLIC_ENDPOINT', MINIO_ENDPOINT)
 MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
 MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
@@ -40,14 +37,20 @@ MINIO_BACKGROUND_BUCKET_NAME = os.getenv('MINIO_BACKGROUND_BUCKET_NAME',
 # Docker API 配置
 DOCKER_API_ENDPOINT = os.getenv('DOCKER_API_ENDPOINT')
 
+# Lucky API 配置
+LUCKY_API_ENDPOINT = os.getenv('LUCKY_API_ENDPOINT')
+LUCKY_API_TOKEN = os.getenv('LUCKY_API_TOKEN')
+
 if DOCKER_API_ENDPOINT:
     print("Docker API 端点已加载。")
 if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     print("MinIO 配置已加载。")
-    print(f" - MinIO 内部连接地址: {MINIO_ENDPOINT}")
-    print(f" - MinIO 公开访问地址: {MINIO_PUBLIC_ENDPOINT}")
+    print(f"MinIO 内部连接地址: {MINIO_ENDPOINT}")
+    print(f"MinIO 公开访问地址: {MINIO_PUBLIC_ENDPOINT}")
+if LUCKY_API_ENDPOINT and LUCKY_API_TOKEN:
+    print("Lucky API 配置已加载。")
 
-# 本地图片存储路由
+# 注册本地图标服务 API
 if ICON_STORAGE_STRATEGY == 'local':
 
     @app.route('/icons/<path:filename>')
@@ -74,12 +77,10 @@ if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     try:
         minio_pure_endpoint = urlparse(
             MINIO_ENDPOINT).netloc or MINIO_ENDPOINT.split('//')[-1]
-
         minio_client = Minio(minio_pure_endpoint,
                              access_key=MINIO_ACCESS_KEY,
                              secret_key=MINIO_SECRET_KEY,
                              secure=False)
-
         print("MinIO 客户端初始化成功 (使用HTTP连接)。")
     except Exception as e:
         print(f"致命错误: 无法连接到 MinIO。请检查您的 MINIO 环境变量。错误: {e}")
@@ -87,7 +88,6 @@ if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
 
 
 def fetch_and_save_icon(url):
-    """根据 URL 抓取网站图标 (favicon)"""
     headers = {
         'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
@@ -96,8 +96,6 @@ def fetch_and_save_icon(url):
     try:
         requests.packages.urllib3.disable_warnings(
             requests.packages.urllib3.exceptions.InsecureRequestWarning)
-
-        # 1. 尝试直接访问 /favicon.ico
         parsed_url = urlparse(url)
         favicon_ico_url = f"{parsed_url.scheme}://{parsed_url.netloc}/favicon.ico"
         response = requests.get(favicon_ico_url,
@@ -112,7 +110,6 @@ def fetch_and_save_icon(url):
                 f.write(response.content)
             return temp_icon_path
 
-        # 2. 如果失败，则解析 HTML 页面查找 <link> 标签
         page_response = requests.get(url,
                                      verify=False,
                                      timeout=10,
@@ -122,17 +119,14 @@ def fetch_and_save_icon(url):
         icon_links = soup.find_all('link',
                                    rel=lambda r: r and 'icon' in r.lower())
         if not icon_links: return None
-
         best_link = icon_links[-1].get('href')
         if not best_link: return None
-
         icon_url = urljoin(url, best_link)
         icon_response = requests.get(icon_url,
                                      verify=False,
                                      timeout=10,
                                      headers=headers)
         icon_response.raise_for_status()
-
         ext = os.path.splitext(urlparse(icon_url).path)[1] or '.png'
         filename = f"{uuid.uuid4()}{ext}"
         temp_icon_path = os.path.join(UPLOAD_FOLDER, filename)
@@ -146,7 +140,6 @@ def fetch_and_save_icon(url):
 
 
 def save_file_locally(temp_path, destination_directory):
-    """将临时文件保存到本地持久化目录"""
     try:
         filename = os.path.basename(temp_path)
         permanent_path = os.path.join(destination_directory, filename)
@@ -158,30 +151,24 @@ def save_file_locally(temp_path, destination_directory):
 
 
 def upload_to_minio(file_path, bucket_name):
-    """上传文件到 MinIO 对象存储"""
     if not minio_client: return None
     try:
         object_prefix = "backgrounds/" if bucket_name == MINIO_BACKGROUND_BUCKET_NAME else "icons/"
         object_name = f"{object_prefix}{uuid.uuid4()}_{os.path.basename(file_path)}"
         minio_client.fput_object(bucket_name, object_name, file_path)
-
         return f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{bucket_name}/{object_name}"
-
     except Exception as e:
         print(f"上传到 MinIO 失败: {e}")
         return None
 
 
-# --- API 路由 ---
 @app.route('/')
 def index():
-    """提供主页面"""
     return render_template('index.html')
 
 
 @app.route('/api/settings', methods=['GET'])
 def get_settings():
-    """获取 settings.yaml 的内容"""
     try:
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}
@@ -194,7 +181,6 @@ def get_settings():
 
 @app.route('/api/settings/background', methods=['POST'])
 def save_background_settings():
-    """保存背景设置到 settings.yaml"""
     new_bg_data = request.get_json()
     all_settings = {}
     try:
@@ -202,7 +188,6 @@ def save_background_settings():
             all_settings = yaml.safe_load(f) or {}
     except FileNotFoundError:
         pass
-
     all_settings['background'] = new_bg_data
     try:
         with open(HOMEPAGE_SETTINGS_PATH, 'w', encoding='utf-8') as f:
@@ -218,7 +203,6 @@ def save_background_settings():
 
 @app.route('/api/backgrounds', methods=['GET'])
 def list_backgrounds():
-    """列出所有可用的背景图片"""
     if ICON_STORAGE_STRATEGY == 'minio':
         if not minio_client: return jsonify({"error": "MinIO 未配置"}), 500
         try:
@@ -227,7 +211,6 @@ def list_backgrounds():
                 return jsonify([])
             objects = minio_client.list_objects(MINIO_BACKGROUND_BUCKET_NAME,
                                                 recursive=True)
-
             image_urls = [{
                 "url":
                 f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{MINIO_BACKGROUND_BUCKET_NAME}/{obj.object_name}",
@@ -252,17 +235,14 @@ def list_backgrounds():
 
 @app.route('/api/backgrounds/upload', methods=['POST'])
 def upload_background():
-    """上传新的背景图片"""
     if 'file' not in request.files: return jsonify({"error": "请求中没有文件部分"}), 400
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "没有选择文件"}), 400
-
     temp_file_path = None
     try:
         filename = f"{uuid.uuid4()}-{os.path.basename(file.filename)}"
         temp_file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(temp_file_path)
-
         final_url = None
         if ICON_STORAGE_STRATEGY == 'minio':
             final_url = upload_to_minio(temp_file_path,
@@ -271,11 +251,8 @@ def upload_background():
         elif ICON_STORAGE_STRATEGY == 'local':
             local_filename = save_file_locally(temp_file_path,
                                                LOCAL_BACKGROUND_PATH)
-            if local_filename:
-                final_url = f"/backgrounds/{local_filename}"
-            else:
-                raise Exception("保存背景到本地失败")
-
+            if local_filename: final_url = f"/backgrounds/{local_filename}"
+            else: raise Exception("保存背景到本地失败")
         return jsonify({"message": "背景上传成功", "url": final_url})
     except Exception as e:
         return jsonify({"error": f"处理上传文件时出错: {e}"}), 500
@@ -286,7 +263,6 @@ def upload_background():
 
 @app.route('/api/docker/containers', methods=['GET'])
 def get_docker_containers():
-    """获取 Docker 容器列表"""
     if not DOCKER_API_ENDPOINT:
         return jsonify({"error": "Docker API 端点未配置"}), 500
     try:
@@ -328,9 +304,64 @@ def get_docker_containers():
         return jsonify({"error": f"获取 Docker 容器列表时发生错误: {e}"}), 500
 
 
+@app.route('/api/lucky/proxies', methods=['GET'])
+def get_lucky_proxies():
+    """获取 Lucky 反向代理规则列表 (V4 - 增加内网地址)"""
+    if not (LUCKY_API_ENDPOINT and LUCKY_API_TOKEN):
+        return jsonify({"error": "Lucky API 端点或Token未在环境变量中配置"}), 500
+
+    headers = {
+        'openToken': LUCKY_API_TOKEN,
+        'User-Agent': 'Homepage-Web-Editor/1.0'
+    }
+
+    try:
+        api_url = f"{LUCKY_API_ENDPOINT.rstrip('/')}/api/webservice/rules"
+        response = requests.get(api_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        lucky_data = response.json()
+
+        all_rules = []
+        if isinstance(lucky_data.get('ruleList'), list):
+            for rule_group in lucky_data['ruleList']:
+                if isinstance(rule_group.get('ProxyList'), list):
+                    all_rules.extend(rule_group['ProxyList'])
+
+        if not all_rules:
+            error_msg = "在Lucky API的响应中未能找到任何'ProxyList'。"
+            print(
+                f"[DEBUG] {error_msg} 完整响应: {json.dumps(lucky_data, indent=2, ensure_ascii=False)}"
+            )
+            return jsonify({"error": error_msg}), 500
+
+        simplified_proxies = []
+        for rule in all_rules:
+            if (rule.get('Enable') and rule.get('Domains')
+                    and isinstance(rule.get('Domains'), list)
+                    and rule['Domains'] and rule.get('Locations')
+                    and isinstance(rule.get('Locations'), list)
+                    and rule['Locations']):
+
+                domain = rule['Domains'][0]
+                name = rule.get('Remark') or domain
+                full_url = f"https://{domain}"
+                lan_url = rule['Locations'][0]
+
+                simplified_proxies.append({
+                    'Name': name,
+                    'Url': full_url,
+                    'LanUrl': lan_url
+                })
+        return jsonify(simplified_proxies)
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"连接 Lucky API 失败: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"处理 Lucky 数据时发生错误: {e}"}), 500
+
+
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    """获取布局和所有分组信息"""
     layout = {}
     all_groups = set()
     try:
@@ -359,7 +390,6 @@ def get_config():
 
 @app.route('/api/services', methods=['GET'])
 def get_services():
-    """获取所有服务"""
     try:
         with open(HOMEPAGE_CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or []
@@ -372,7 +402,6 @@ def get_services():
 
 @app.route('/api/services', methods=['POST'])
 def save_services():
-    """保存服务配置"""
     try:
         with open(HOMEPAGE_CONFIG_PATH, 'w', encoding='utf-8') as f:
             yaml.dump(request.get_json(),
@@ -387,7 +416,6 @@ def save_services():
 
 @app.route('/api/bookmarks', methods=['GET'])
 def get_bookmarks():
-    """获取所有书签"""
     try:
         with open(HOMEPAGE_BOOKMARKS_PATH, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or []
@@ -400,7 +428,6 @@ def get_bookmarks():
 
 @app.route('/api/bookmarks', methods=['POST'])
 def save_bookmarks():
-    """保存书签配置"""
     try:
         with open(HOMEPAGE_BOOKMARKS_PATH, 'w', encoding='utf-8') as f:
             yaml.dump(request.get_json(),
@@ -415,21 +442,16 @@ def save_bookmarks():
 
 @app.route('/api/item/prepare', methods=['POST'])
 def prepare_item_api():
-    """准备一个服务或书签项目（抓取图标、处理上传等）"""
     name, url, desc, abbr = request.form.get('name'), request.form.get(
         'href'), request.form.get('description',
                                   ''), request.form.get('abbr', '')
-
     icon_file, current_icon_url = request.files.get(
         'icon_file'), request.form.get('icon')
-
     if not (name or abbr) or not url:
         return jsonify({"error": "名称/缩写和地址是必需的。"}), 400
-
     temp_file_path, icon_url_for_config = None, current_icon_url if current_icon_url not in [
         None, 'null', 'undefined'
     ] else None
-
     try:
         if icon_file and icon_file.filename != '':
             filename = f"{uuid.uuid4()}-{os.path.basename(icon_file.filename)}"
@@ -437,7 +459,6 @@ def prepare_item_api():
             icon_file.save(temp_file_path)
         elif not icon_url_for_config:
             temp_file_path = fetch_and_save_icon(url)
-
         if temp_file_path:
             if ICON_STORAGE_STRATEGY == 'minio':
                 print("策略 'minio': 正在尝试上传图标...")
@@ -457,12 +478,10 @@ def prepare_item_api():
                                                    LOCAL_ICON_PATH)
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
-
         final_item_obj = {'name': name, 'href': url}
         if desc: final_item_obj['description'] = desc
         if icon_url_for_config: final_item_obj['icon'] = icon_url_for_config
         if abbr: final_item_obj['abbr'] = abbr
-
         return jsonify({"message": "项目已准备就绪", "item": final_item_obj})
     except Exception as e:
         return jsonify({"error": f"处理项目时发生未知错误: {e}"}), 500
