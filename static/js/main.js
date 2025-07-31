@@ -213,10 +213,17 @@ const app = createApp({
 
     // 打开添加项目对话框
     const openAddDialog = () => {
-      // 初始化表单并显示对话框
       isEditMode.value = false;
       addForm.value = { type: "service", name: "", href: "", description: "", abbr: "", group: "", column: "", icon: null, icon_file: null };
       if (fileInput.value) fileInput.value.value = "";
+
+      // --- MODIFICATION START ---
+      // 如果存在服务组，则默认选中第一个
+      if (serviceGroupNames.value.length > 0) {
+        addForm.value.group = serviceGroupNames.value[0];
+      }
+      // --- MODIFICATION END ---
+
       addDialogVisible.value = true;
     };
 
@@ -442,6 +449,20 @@ const app = createApp({
       },
       { deep: true }
     );
+
+    // --- MODIFICATION START ---
+    // 监听 'addForm' 中 'name' 的变化，用于同步 'description'
+    watch(
+      () => addForm.value.name,
+      (newName) => {
+        // 仅在“添加新项目”模式下，且项目类型为“服务”时
+        if (!isEditMode.value && addForm.value.type === "service") {
+          // 将描述同步为名称。用户之后仍然可以手动修改描述。
+          addForm.value.description = newName;
+        }
+      }
+    );
+    // --- MODIFICATION END ---
 
     // 组件挂载后获取所有数据
     onMounted(fetchAllData);

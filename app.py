@@ -199,7 +199,7 @@ def save_background_settings():
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             all_settings = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        pass  # 如果文件不存在，就创建一个新的
+        pass
 
     all_settings['background'] = new_bg_data
     try:
@@ -416,8 +416,10 @@ def prepare_item_api():
     name, url, desc, abbr = request.form.get('name'), request.form.get(
         'href'), request.form.get('description',
                                   ''), request.form.get('abbr', '')
+
     icon_file, current_icon_url = request.files.get(
-        'icon_file'), request.form.get('current_icon_url')
+        'icon_file'), request.form.get('icon')
+
     if not (name or abbr) or not url:
         return jsonify({"error": "名称/缩写和地址是必需的。"}), 400
 
@@ -436,7 +438,6 @@ def prepare_item_api():
             temp_file_path = fetch_and_save_icon(url)
 
         if temp_file_path:
-            # 如果有临时文件（无论是上传还是抓取），则根据策略进行存储
             if ICON_STORAGE_STRATEGY == 'minio':
                 print("策略 'minio': 正在尝试上传图标...")
                 minio_url = upload_to_minio(temp_file_path,
@@ -450,7 +451,6 @@ def prepare_item_api():
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
             else:
-                # 对未知策略的降级处理
                 print(f"警告: 未知策略 '{ICON_STORAGE_STRATEGY}'。将默认使用 'local'。")
                 local_filename = save_file_locally(temp_file_path,
                                                    LOCAL_ICON_PATH)
@@ -472,7 +472,5 @@ def prepare_item_api():
             os.remove(temp_file_path)
 
 
-# --- 应用启动入口 ---
 if __name__ == '__main__':
-    # 使用 debug=True 进行开发，生产环境应通过 Gunicorn 启动
     app.run(host='0.0.0.0', port=3211, debug=True)
