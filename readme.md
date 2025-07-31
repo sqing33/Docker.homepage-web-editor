@@ -41,18 +41,18 @@ services:
       - ./config:/app/homepage/config # homepage 配置文件路径
       - ./data:/app/data
     environment:
-      # --- 首次运行时，将使用这些环境变量来生成 config.yaml ---
-
       # 图片存储策略: 'minio' 或 'local'
       - ICON_STORAGE_STRATEGY=minio
 
       # MinIO 服务器信息 ('ICON_STORAGE_STRATEGY=minio' 则必须)
+      # 内网连接地址: 用于后端程序连接MinIO并上传文件。
       - MINIO_ENDPOINT=http://192.168.1.100:9000
+      # 公网访问地址: 供Homepage在公网访问图片。
+      - MINIO_PUBLIC_ENDPOINT=https://
       - MINIO_ACCESS_KEY=your_minio_access_key
       - MINIO_SECRET_KEY=your_minio_secret_key
       - MINIO_ICONS_BUCKET_NAME=icons
       - MINIO_BACKGROUND_BUCKET_NAME=background
-      - MINIO_USE_SSL=False # 如果是 https, 请设置为 False
 
       # Docker API 地址
       - DOCKER_API_ENDPOINT=http://192.168.1.100:2375

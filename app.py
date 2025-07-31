@@ -47,7 +47,7 @@ if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     print(f" - MinIO 内部连接地址: {MINIO_ENDPOINT}")
     print(f" - MinIO 公开访问地址: {MINIO_PUBLIC_ENDPOINT}")
 
-# --- 根据存储策略条件化地注册路由 ---
+# 本地图片存储路由
 if ICON_STORAGE_STRATEGY == 'local':
 
     @app.route('/icons/<path:filename>')
@@ -64,7 +64,6 @@ if ICON_STORAGE_STRATEGY == 'local':
 else:
     print("由于存储策略不是 'local'，本地文件服务 API (/icons, /backgrounds) 已被禁用。")
 
-# 确保所有必要的目录都存在
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(LOCAL_ICON_PATH, exist_ok=True)
 os.makedirs(LOCAL_BACKGROUND_PATH, exist_ok=True)
@@ -73,11 +72,9 @@ os.makedirs(LOCAL_BACKGROUND_PATH, exist_ok=True)
 minio_client = None
 if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
     try:
-        # 从完整的 endpoint URL 中提取 host:port 部分
         minio_pure_endpoint = urlparse(
             MINIO_ENDPOINT).netloc or MINIO_ENDPOINT.split('//')[-1]
 
-        # secure=False 表示强制使用 HTTP
         minio_client = Minio(minio_pure_endpoint,
                              access_key=MINIO_ACCESS_KEY,
                              secret_key=MINIO_SECRET_KEY,
@@ -89,7 +86,6 @@ if MINIO_ENDPOINT and ICON_STORAGE_STRATEGY == 'minio':
         minio_client = None
 
 
-# --- 工具函数 ---
 def fetch_and_save_icon(url):
     """根据 URL 抓取网站图标 (favicon)"""
     headers = {
@@ -98,7 +94,6 @@ def fetch_and_save_icon(url):
     }
     temp_icon_path = None
     try:
-        # 禁用 InsecureRequestWarning 警告
         requests.packages.urllib3.disable_warnings(
             requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
@@ -128,7 +123,6 @@ def fetch_and_save_icon(url):
                                    rel=lambda r: r and 'icon' in r.lower())
         if not icon_links: return None
 
-        # 通常最后一个链接是最高清的
         best_link = icon_links[-1].get('href')
         if not best_link: return None
 
@@ -146,7 +140,6 @@ def fetch_and_save_icon(url):
             f.write(icon_response.content)
         return temp_icon_path
     except Exception as e:
-        # 如果过程中发生错误，清理已下载的临时文件
         if temp_icon_path and os.path.exists(temp_icon_path):
             os.remove(temp_icon_path)
         return None
@@ -172,7 +165,6 @@ def upload_to_minio(file_path, bucket_name):
         object_name = f"{object_prefix}{uuid.uuid4()}_{os.path.basename(file_path)}"
         minio_client.fput_object(bucket_name, object_name, file_path)
 
-        # 使用公开的端点地址来构建最终返回的 URL
         return f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{bucket_name}/{object_name}"
 
     except Exception as e:
@@ -209,7 +201,7 @@ def save_background_settings():
         with open(HOMEPAGE_SETTINGS_PATH, 'r', encoding='utf-8') as f:
             all_settings = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        pass  # 如果文件不存在，就创建一个新的
+        pass
 
     all_settings['background'] = new_bg_data
     try:
@@ -235,7 +227,7 @@ def list_backgrounds():
                 return jsonify([])
             objects = minio_client.list_objects(MINIO_BACKGROUND_BUCKET_NAME,
                                                 recursive=True)
-            # 列出图片时，同样使用公开地址
+
             image_urls = [{
                 "url":
                 f"{MINIO_PUBLIC_ENDPOINT.rstrip('/')}/{MINIO_BACKGROUND_BUCKET_NAME}/{obj.object_name}",
@@ -255,7 +247,7 @@ def list_backgrounds():
             return jsonify(image_urls)
         except Exception as e:
             return jsonify({"error": f"从本地列出背景失败: {e}"}), 500
-    return jsonify([])  # 默认返回空列表
+    return jsonify([])
 
 
 @app.route('/api/backgrounds/upload', methods=['POST'])
@@ -440,16 +432,13 @@ def prepare_item_api():
 
     try:
         if icon_file and icon_file.filename != '':
-            # 优先处理用户直接上传的图标
             filename = f"{uuid.uuid4()}-{os.path.basename(icon_file.filename)}"
             temp_file_path = os.path.join(UPLOAD_FOLDER, filename)
             icon_file.save(temp_file_path)
         elif not icon_url_for_config:
-            # 如果没有当前图标，也没有上传新图标，则尝试从 URL 抓取
             temp_file_path = fetch_and_save_icon(url)
 
         if temp_file_path:
-            # 如果有临时文件（无论是上传还是抓取），则根据策略进行存储
             if ICON_STORAGE_STRATEGY == 'minio':
                 print("策略 'minio': 正在尝试上传图标...")
                 minio_url = upload_to_minio(temp_file_path,
@@ -463,14 +452,12 @@ def prepare_item_api():
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
             else:
-                # 对未知策略的降级处理
                 print(f"警告: 未知策略 '{ICON_STORAGE_STRATEGY}'。将默认使用 'local'。")
                 local_filename = save_file_locally(temp_file_path,
                                                    LOCAL_ICON_PATH)
                 if local_filename:
                     icon_url_for_config = f"/icons/{local_filename}"
 
-        # 构建最终要返回给前端的项目对象
         final_item_obj = {'name': name, 'href': url}
         if desc: final_item_obj['description'] = desc
         if icon_url_for_config: final_item_obj['icon'] = icon_url_for_config
@@ -480,12 +467,9 @@ def prepare_item_api():
     except Exception as e:
         return jsonify({"error": f"处理项目时发生未知错误: {e}"}), 500
     finally:
-        # 确保清理临时文件
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
 
-# --- 应用启动入口 ---
 if __name__ == '__main__':
-    # 使用 debug=True 进行开发，生产环境应通过 Gunicorn 启动
     app.run(host='0.0.0.0', port=3211, debug=True)

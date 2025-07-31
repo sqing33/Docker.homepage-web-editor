@@ -21,12 +21,12 @@ const app = createApp({
     const dockerContainers = ref([]);
     const dockerSearchQuery = ref("");
 
-    // --- MODIFICATION START: Updated background states ---
+    // --- MODIFICATION START: Simplified background states ---
     const backgroundDialogVisible = ref(false);
     const isSavingBackground = ref(false);
     const isUploadingBackground = ref(false);
-    // Add new fields: blur, brightness, cardBlur with default values
-    const backgroundForm = ref({ image: "", saturate: 100, opacity: 100, blur: "", brightness: 100, cardBlur: "" });
+    // Removed brightness and cardBlur from the default state
+    const backgroundForm = ref({ image: "", saturate: 100, opacity: 100, blur: "" });
     const backgroundFileInput = ref(null);
     const backgroundList = ref([]);
 
@@ -39,10 +39,6 @@ const app = createApp({
       { value: "2xl", label: "超大 (2xl)" },
       { value: "3xl", label: "极大 (3xl)" },
     ]);
-
-    // Computed properties to handle incompatibility
-    const isCardBlurActive = computed(() => !!backgroundForm.value.cardBlur);
-    const isBackgroundFilterActive = computed(() => !!backgroundForm.value.blur || backgroundForm.value.saturate !== 100 || backgroundForm.value.brightness !== 100);
     // --- MODIFICATION END ---
 
     // 计算属性
@@ -104,8 +100,8 @@ const app = createApp({
         if (!response.ok) throw new Error("无法加载设置");
         const settings = await response.json();
         if (settings.background) {
-          // --- MODIFICATION START: Merge with new default fields ---
-          const defaultBgSettings = { image: "", saturate: 100, opacity: 100, blur: "", brightness: 100, cardBlur: "" };
+          // --- MODIFICATION START: Merge with simplified default fields ---
+          const defaultBgSettings = { image: "", saturate: 100, opacity: 100, blur: "" };
           backgroundForm.value = { ...defaultBgSettings, ...settings.background };
           // --- MODIFICATION END ---
         }
@@ -134,8 +130,6 @@ const app = createApp({
         }));
       } else {
         dataToSave = bookmarks.value.map((column) => {
-          // This logic seems to have a bug, it will group bookmarks incorrectly.
-          // Let's fix it while we are here.
           const categories = {};
           column.items.forEach((item) => {
             if (!categories[item._categoryName]) {
@@ -417,7 +411,6 @@ const app = createApp({
     const submitBackgroundSettings = async () => {
       isSavingBackground.value = true;
       try {
-        // Create a clean object to save, removing any empty properties
         const settingsToSave = {};
         for (const key in backgroundForm.value) {
           if (backgroundForm.value[key] !== "" && backgroundForm.value[key] !== null) {
@@ -439,18 +432,19 @@ const app = createApp({
       }
     };
 
-    // --- MODIFICATION START: Expanded watcher for background filters ---
+    // --- MODIFICATION START: Simplified watcher for background filters ---
     const blurMap = { sm: "4px", md: "8px", lg: "12px", xl: "16px", "2xl": "24px", "3xl": "32px" };
 
     watch(
       backgroundForm,
       (newSettings) => {
-        const { image, saturate, opacity, blur, brightness } = newSettings;
+        // Removed brightness from destructuring
+        const { image, saturate, opacity, blur } = newSettings;
         document.body.style.backgroundImage = image ? `url('${image}')` : "none";
 
         const filterParts = [];
         if (saturate !== 100) filterParts.push(`saturate(${saturate}%)`);
-        if (brightness !== 100) filterParts.push(`brightness(${brightness}%)`);
+        // Removed brightness filter logic
         if (blur && blurMap[blur]) filterParts.push(`blur(${blurMap[blur]})`);
 
         document.documentElement.style.setProperty("--bg-filter", filterParts.join(" "));
@@ -460,7 +454,6 @@ const app = createApp({
     );
     // --- MODIFICATION END ---
 
-    // 监听 'addForm' 中 'name' 的变化，用于同步 'description'
     watch(
       () => addForm.value.name,
       (newName) => {
@@ -510,17 +503,13 @@ const app = createApp({
       Plus,
       Link,
       Picture,
-      QuestionFilled, // Make icon available to template
-      // --- MODIFICATION START: Expose new states and options ---
+      // --- MODIFICATION START: Expose only needed states ---
       blurOptions,
-      isCardBlurActive,
-      isBackgroundFilterActive,
       // --- MODIFICATION END ---
     };
   },
 });
 
-// --- MODIFICATION START: Updated CSS for new filters ---
 const style = document.createElement("style");
 style.textContent = `
   body::before {
@@ -534,7 +523,6 @@ style.textContent = `
   body { background-image: none !important; }
 `;
 document.head.appendChild(style);
-// --- MODIFICATION END ---
 
 app.use(ElementPlus);
 app.mount("#app");
